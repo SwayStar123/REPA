@@ -305,10 +305,11 @@ def main(args):
 
             with accelerator.accumulate(model):
                 model_kwargs = dict(y=labels)
-                loss, proj_loss = loss_fn(model, x, model_kwargs, zs=zs)
+                loss, proj_loss, contrastive_flow_loss = loss_fn(model, x, model_kwargs, zs=zs)
                 loss_mean = loss.mean()
                 proj_loss_mean = proj_loss.mean()
-                loss = loss_mean + proj_loss_mean * args.proj_coeff
+                contrastive_flow_loss_mean = contrastive_flow_loss.mean()
+                loss = (loss_mean - contrastive_flow_loss_mean * args.contrastive_flow_coeff) + proj_loss_mean * args.proj_coeff
                     
                 ## optimization
                 accelerator.backward(loss)
@@ -434,6 +435,7 @@ def parse_args(input_args=None):
     parser.add_argument("--cfg-prob", type=float, default=0.1)
     parser.add_argument("--enc-type", type=str, default='dinov2-vit-b')
     parser.add_argument("--proj-coeff", type=float, default=0.5)
+    parser.add_argument("--contrastive-flow-coeff", type=float, default=0.05)
     parser.add_argument("--weighting", default="uniform", type=str, help="Max gradient norm.")
     parser.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=False)
 
