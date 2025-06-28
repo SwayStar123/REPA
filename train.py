@@ -30,6 +30,9 @@ import math
 from torchvision.utils import make_grid
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from torchvision.transforms import Normalize
+from torchmetrics.image.fid import FrechetInceptionDistance
+from torchvision.transforms import ConvertImageDtype
+import torchvision
 
 logger = get_logger(__name__)
 
@@ -75,6 +78,118 @@ def sample_posterior(moments, latents_scale=1., latents_bias=0.):
     z = mean + std * torch.randn_like(mean)
     z = (z * latents_scale + latents_bias) 
     return z 
+
+
+def free_gpu_memory(*tensors):
+    """Delete provided tensors (if any) and empty the CUDA cache to proactively
+    release VRAM. Use this **sparingly** inside tight loops when you are sure
+    the tensors are no longer needed."""
+    for t in tensors:
+        try:
+            del t
+        except Exception:
+            # If the tensor is already out of scope or None, ignore.
+            pass
+
+@torch.no_grad()
+def calculate_fid(model, vae, train_dataloader, encoders, encoder_types, architectures, accelerator, args, num_samples=50000, latents_scale=None, latents_bias=None):
+    """
+    Calculate FID score using generated and real images across all GPUs.
+    """
+    model.eval()
+    
+    # Initialize FID metric on each GPU
+    fid = FrechetInceptionDistance(feature=2048, normalize=True).to(accelerator.device)
+    rescaler_to_uint8 = ConvertImageDtype(torch.uint8)
+    rescaler_to_0_1 = lambda x: (x + 1.0) / 2.0  # Convert [-1, 1] to [0, 1]
+    
+    # Calculate samples per process
+    samples_per_process = num_samples // accelerator.num_processes
+    local_batch_size = args.batch_size // accelerator.num_processes
+    
+    # Move VAE to device
+    vae = vae.to(accelerator.device)
+    
+    samples_processed = 0
+    
+    try:
+        for raw_image, x, y in train_dataloader:
+            if samples_processed >= samples_per_process:
+                break
+                
+            raw_image = raw_image.to(accelerator.device, non_blocking=True)
+            x = x.squeeze(dim=1).to(accelerator.device, non_blocking=True)
+            y = y.to(accelerator.device, non_blocking=True)
+            
+            batch_size = x.shape[0]
+            
+            # Process real images
+            with torch.no_grad():
+                real_latents = sample_posterior(x, latents_scale=latents_scale, latents_bias=latents_bias)
+                real_images = vae.decode((real_latents - latents_bias) / latents_scale).sample.clamp(-1, 1)
+                
+                # Generate fake images
+                noise = torch.randn_like(real_latents)
+                from samplers import euler_sampler
+                fake_latents = euler_sampler(
+                    model, 
+                    noise, 
+                    y,
+                    num_steps=50, 
+                    cfg_scale=1.0,
+                    guidance_low=0.,
+                    guidance_high=1.,
+                    path_type=args.path_type,
+                    heun=False,
+                )
+                fake_images = vae.decode((fake_latents - latents_bias) / latents_scale).sample.clamp(-1, 1)
+            
+            # Convert to uint8 for FID calculation
+            real_images_uint8 = rescaler_to_uint8(rescaler_to_0_1(real_images))
+            fake_images_uint8 = rescaler_to_uint8(rescaler_to_0_1(fake_images))
+            
+            # Update FID
+            fid.update(real_images_uint8, real=True)
+            fid.update(fake_images_uint8, real=False)
+            
+            free_gpu_memory(
+                raw_image,
+                x,
+                y,
+                real_latents,
+                real_images,
+                fake_latents,
+                fake_images,
+                real_images_uint8,
+                fake_images_uint8,
+            )
+
+            samples_processed += batch_size
+            
+    except Exception as e:
+        if accelerator.is_main_process:
+            logger.warning(f"Error during FID calculation: {e}")
+        return float('inf')
+    
+    # Synchronize across all processes
+    accelerator.wait_for_everyone()
+    
+    # Compute FID score
+    try:
+        fid_score = fid.compute()
+        fid_value = fid_score.item() if torch.is_tensor(fid_score) else fid_score
+    except Exception as e:
+        if accelerator.is_main_process:
+            logger.warning(f"Error computing FID: {e}")
+        fid_value = float('inf')
+    
+    # Cleanup
+    del fid
+    vae = vae.to("cpu")
+    torch.cuda.empty_cache()
+    
+    model.train()
+    return fid_value
 
 
 @torch.no_grad()
@@ -327,6 +442,23 @@ def main(args):
                 progress_bar.update(1)
                 global_step += 1                
             if global_step % args.checkpointing_steps == 0 and global_step > 0:
+                # Calculate FID before saving checkpoint (if enabled)
+                if args.enable_fid:
+                    accelerator.wait_for_everyone()
+                    if accelerator.is_main_process:
+                        logger.info(f"Calculating FID at step {global_step}")
+                    
+                    fid_score = calculate_fid(
+                        ema, vae, train_dataloader, encoders, encoder_types, architectures,
+                        accelerator, args, num_samples=args.fid_samples, 
+                        latents_scale=latents_scale, latents_bias=latents_bias
+                    )
+                    
+                    if accelerator.is_main_process:
+                        logger.info(f"FID Score: {fid_score:.4f}")
+                        # Log FID to wandb
+                        accelerator.log({"fid_score": fid_score}, step=global_step)
+                
                 if accelerator.is_main_process:
                     checkpoint = {
                         "model": model.module.state_dict(),
@@ -359,8 +491,11 @@ def main(args):
                     gt_samples = (gt_samples + 1) / 2.
                 out_samples = accelerator.gather(samples.to(torch.float32))
                 gt_samples = accelerator.gather(gt_samples.to(torch.float32))
-                accelerator.log({"samples": wandb.Image(array2grid(out_samples)),
-                                 "gt_samples": wandb.Image(array2grid(gt_samples))})
+                
+                # Log to wandb more rarely, due to storage limits
+                if global_step % 10000 == 0:
+                    accelerator.log({"samples": wandb.Image(array2grid(out_samples)),
+                                     "gt_samples": wandb.Image(array2grid(gt_samples))})
                 logging.info("Generating EMA samples done.")
 
             logs = {
@@ -438,6 +573,10 @@ def parse_args(input_args=None):
     parser.add_argument("--contrastive-flow-coeff", type=float, default=0.05)
     parser.add_argument("--weighting", default="uniform", type=str, help="Max gradient norm.")
     parser.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=False)
+
+    # Evaluation parameters
+    parser.add_argument("--enable-fid", action="store_true", default=False, help="Enable FID calculation during checkpointing")
+    parser.add_argument("--fid-samples", type=int, default=50000, help="Number of samples for FID calculation")
 
     if input_args is not None:
         args = parser.parse_args(input_args)
