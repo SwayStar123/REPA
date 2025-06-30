@@ -92,9 +92,9 @@ def free_gpu_memory(*tensors):
             pass
 
 @torch.no_grad()
-def calculate_fid(model, vae, train_dataloader, encoders, encoder_types, architectures, accelerator, args, num_samples=50000, latents_scale=None, latents_bias=None):
+def calculate_fid(model, vae, val_dataloader, encoders, encoder_types, architectures, accelerator, args, num_samples=50000, latents_scale=None, latents_bias=None):
     """
-    Calculate FID score using generated and real images across all GPUs.
+    Calculate FID score using generated and real images from validation set across all GPUs.
     """
     model.eval()
     
@@ -113,7 +113,7 @@ def calculate_fid(model, vae, train_dataloader, encoders, encoder_types, archite
     samples_processed = 0
     
     try:
-        for raw_image, x, y in train_dataloader:
+        for raw_image, x, y in val_dataloader:
             if samples_processed >= samples_per_process:
                 break
                 
@@ -318,7 +318,8 @@ def main(args):
     )    
     
     # Setup data:
-    train_dataset = CustomDataset(args.data_dir)
+    train_dataset = CustomDataset(os.path.join(args.data_dir, "train"))
+    val_dataset = CustomDataset(os.path.join(args.data_dir, "validation"))
     local_batch_size = int(args.batch_size // accelerator.num_processes)
     train_dataloader = DataLoader(
         train_dataset,
@@ -328,8 +329,17 @@ def main(args):
         pin_memory=True,
         drop_last=True
     )
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=local_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=False
+    )
     if accelerator.is_main_process:
-        logger.info(f"Dataset contains {len(train_dataset):,} images ({args.data_dir})")
+        logger.info(f"Train dataset contains {len(train_dataset):,} images ({os.path.join(args.data_dir, 'train')})")
+        logger.info(f"Validation dataset contains {len(val_dataset):,} images ({os.path.join(args.data_dir, 'validation')})")
     
     # Prepare models for training:
     update_ema(ema, model, decay=0)  # Ensure EMA is initialized with synced weights
@@ -442,7 +452,7 @@ def main(args):
                         logger.info(f"Calculating FID at step {global_step}")
                     
                     fid_score = calculate_fid(
-                        ema, vae, train_dataloader, encoders, encoder_types, architectures,
+                        ema, vae, val_dataloader, encoders, encoder_types, architectures,
                         accelerator, args, num_samples=args.fid_samples, 
                         latents_scale=latents_scale, latents_bias=latents_bias
                     )
