@@ -123,13 +123,8 @@ def calculate_fid(model, vae, train_dataloader, encoders, encoder_types, archite
             
             batch_size = x.shape[0]
             
-            # Process real images
             with torch.no_grad():
-                real_latents = sample_posterior(x, latents_scale=latents_scale, latents_bias=latents_bias)
-                real_images = vae.decode((real_latents - latents_bias) / latents_scale).sample.clamp(-1, 1)
-                
-                # Generate fake images
-                noise = torch.randn_like(real_latents)
+                noise = torch.randn_like(x)
                 from samplers import euler_sampler
                 fake_latents = euler_sampler(
                     model, 
@@ -145,7 +140,7 @@ def calculate_fid(model, vae, train_dataloader, encoders, encoder_types, archite
                 fake_images = vae.decode((fake_latents - latents_bias) / latents_scale).sample.clamp(-1, 1)
             
             # Convert to uint8 for FID calculation
-            real_images_uint8 = rescaler_to_uint8(rescaler_to_0_1(real_images))
+            real_images_uint8 = rescaler_to_uint8(rescaler_to_0_1(raw_image))
             fake_images_uint8 = rescaler_to_uint8(rescaler_to_0_1(fake_images))
             
             # Update FID
@@ -156,8 +151,6 @@ def calculate_fid(model, vae, train_dataloader, encoders, encoder_types, archite
                 raw_image,
                 x,
                 y,
-                real_latents,
-                real_images,
                 fake_latents,
                 fake_images,
                 real_images_uint8,
