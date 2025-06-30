@@ -495,15 +495,15 @@ def main(args):
                 out_samples = accelerator.gather(samples.to(torch.float32))
                 gt_samples = accelerator.gather(gt_samples.to(torch.float32))
                 
-                # Log to wandb more rarely, due to storage limits
-                if global_step % 10000 == 0:
-                    accelerator.log({"samples": wandb.Image(array2grid(out_samples)),
-                                     "gt_samples": wandb.Image(array2grid(gt_samples))})
+
+                accelerator.log({"samples": wandb.Image(array2grid(out_samples)),
+                                    "gt_samples": wandb.Image(array2grid(gt_samples))})
                 logging.info("Generating EMA samples done.")
 
             logs = {
                 "loss": accelerator.gather(loss_mean).mean().detach().item(), 
                 "proj_loss": accelerator.gather(proj_loss_mean).mean().detach().item(),
+                "contrastive_flow_loss": accelerator.gather(contrastive_flow_loss_mean).mean().detach().item(),
                 "grad_norm": accelerator.gather(grad_norm).mean().detach().item()
             }
             progress_bar.set_postfix(**logs)
@@ -578,7 +578,7 @@ def parse_args(input_args=None):
     parser.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=False)
 
     # Evaluation parameters
-    parser.add_argument("--enable-fid", action="store_true", default=False, help="Enable FID calculation during checkpointing")
+    parser.add_argument("--enable-fid", action="store_true", default=True, help="Enable FID calculation during checkpointing")
     parser.add_argument("--fid-samples", type=int, default=50000, help="Number of samples for FID calculation")
 
     if input_args is not None:

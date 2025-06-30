@@ -46,13 +46,13 @@ accelerate launch train.py \
   --path-type="linear" \
   --prediction="v" \
   --weighting="uniform" \
-  --model="SiT-XL/2" \
+  --model="SiT-B/2" \
   --enc-type="dinov2-vit-b" \
   --proj-coeff=0.5 \
   --encoder-depth=8 \
   --output-dir="exps" \
   --exp-name="linear-dinov2-b-enc8" \
-  --data-dir=[YOUR_DATA_PATH]
+  --data-dir=dataset
 ```
 
 Then this script will automatically create the folder in `exps` to save logs and checkpoints. You can adjust the following options:
