@@ -4,3 +4,4 @@ imagenet
 dataset
 exps
 wandb
+logs

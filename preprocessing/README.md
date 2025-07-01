@@ -19,6 +19,15 @@ python dataset_tools.py encode --source=[TARGET_PATH]/images \
     --dest=[TARGET_PATH]/vae-sd
 ```
 
+for validation set, do
+
+```
+python -m preprocessing.fix_val_labels \
+  --images-dir  /path/to/dataset/validation/images \
+  --xml-dir     /path/to/ILSVRC/Annotations/CLS-LOC/val
+```
+to fix the labels
+
 Here,`YOUR_DOWNLOAD_PATH` is the directory that you downloaded the dataset, and `TARGET_PATH` is the directory that you will save the preprocessed images and corresponding compressed latent vectors. This directory will be used for your experiment scripts. 
 
 ## Acknowledgement
