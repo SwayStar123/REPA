@@ -504,7 +504,7 @@ def main(args):
                         ys,
                         num_steps=50, 
                         cfg_scale=1.0,
-                        guidance_low=0.,
+                        guidance_low=1.,
                         guidance_high=1.,
                         path_type=args.path_type,
                         heun=False,
