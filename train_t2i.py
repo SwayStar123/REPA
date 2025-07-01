@@ -349,7 +349,7 @@ def main(args):
                 out_samples = accelerator.gather(samples.to(torch.float32))
                 gt_samples = accelerator.gather(gt_samples.to(torch.float32))
                 accelerator.log({"samples": wandb.Image(array2grid(out_samples)),
-                                 "gt_samples": wandb.Image(array2grid(gt_samples))})
+                                 "gt_samples": wandb.Image(array2grid(gt_samples))}, step=global_step)
                 logging.info("Generating EMA samples done.")
 
             logs = {

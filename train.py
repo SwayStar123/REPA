@@ -135,11 +135,6 @@ def calculate_fid(model, vae, val_dataloader, accelerator, args, num_samples=500
         batch_size = x.shape[0]
         
         with torch.no_grad():
-            # Sample from posterior and decode real latents to get real images
-            x_sampled = sample_posterior(x, latents_scale=latents_scale, latents_bias=latents_bias)
-            with accelerator.autocast():
-                real_images = vae.decode(((x_sampled - latents_bias) / latents_scale).to(dtype=dtype)).sample.clamp(-1, 1)
-            
             # Create noise on the correct device
             noise = torch.randn(x.shape[0], 4, x.shape[2], x.shape[3], device=accelerator.device, dtype=dtype)
             from samplers import euler_maruyama_sampler
@@ -159,20 +154,16 @@ def calculate_fid(model, vae, val_dataloader, accelerator, args, num_samples=500
                 fake_images = vae.decode(((fake_latents - latents_bias) / latents_scale).to(dtype=dtype)).sample.clamp(-1, 1)
 
         # Convert to uint8 for FID calculation
-        real_images_uint8 = rescaler_to_uint8(rescaler_to_0_1(real_images))
         fake_images_uint8 = rescaler_to_uint8(rescaler_to_0_1(fake_images))
         
         # Update FID
-        fid.update(real_images_uint8, real=True)
+        fid.update(raw_image, real=True)
         fid.update(fake_images_uint8, real=False)
 
         free_gpu_memory(
             raw_image,
             x,
-            x_sampled,
             y,
-            real_images,
-            real_images_uint8,
             fake_latents,
             fake_images,
             fake_images_uint8,
@@ -519,7 +510,7 @@ def main(args):
                 vae = vae.to("cpu")
 
                 accelerator.log({"samples": wandb.Image(array2grid(out_samples)),
-                                    "gt_samples": wandb.Image(array2grid(gt_samples))})
+                                    "gt_samples": wandb.Image(array2grid(gt_samples))}, step=global_step)
                 logging.info("Generating EMA samples done.")
 
             logs = {
