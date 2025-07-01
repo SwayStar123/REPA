@@ -137,6 +137,22 @@ torchrun --nnodes=1 --nproc_per_node=8 generate.py \
 
 We also provide the SiT-XL/2 checkpoint (trained for 4M iterations) used in the final evaluation. It will be automatically downloaded if you do not specify `--ckpt`.
 
+To calculate FID
+
+```
+python calculate_fid.py \
+    --checkpoint-path "exps/linear-dinov2-b-enc8/checkpoints/0400000.pt" \
+    --data-dir "dataset/validation" \
+    --model "SiT-XL/2" \
+    --steps "[50]" \
+    --cfg-scale "[1.85]" \
+    --guidance-low "[0.0]" \
+    --guidance-high "[0.65]" \
+    --num-samples 50000 \
+    --batch-size 256 \
+    --output-dir "fid_results_quick_test" 
+```
+
 ### Note
 
 It's possible that this code may not accurately replicate the results outlined in the paper due to potential human errors during the preparation and cleaning of the code for release. If you encounter any difficulties in reproducing our findings, please don't hesitate to inform us. Additionally, we'll make an effort to carry out sanity-check experiments in the near future.
