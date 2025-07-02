@@ -140,7 +140,7 @@ We also provide the SiT-XL/2 checkpoint (trained for 4M iterations) used in the 
 To calculate FID
 
 ```
-python calculate_fid.py \
+sudo accelerate launch calculate_fid.py \
     --checkpoint-path "exps/linear-dinov2-b-enc8/checkpoints/0400000.pt" \
     --data-dir "dataset/validation" \
     --model "SiT-XL/2" \

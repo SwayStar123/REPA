@@ -454,6 +454,10 @@ def main(args):
                     update_ema(ema, model) # change ema function
             
             ### enter
+            if accelerator.sync_gradients:
+                progress_bar.update(1)
+                global_step += 1    
+
             if global_step % args.checkpointing_steps == 0:
                 # Calculate FID before saving checkpoint (if enabled)
                 if args.enable_fid:
@@ -494,9 +498,9 @@ def main(args):
                         xT, 
                         ys,
                         num_steps=50, 
-                        cfg_scale=1.0,
+                        cfg_scale=1.85,
                         guidance_low=0.,
-                        guidance_high=1.,
+                        guidance_high=0.65,
                         path_type=args.path_type,
                         heun=False,
                     ).to(torch.float32)
@@ -521,10 +525,6 @@ def main(args):
             }
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
-
-            if accelerator.sync_gradients:
-                progress_bar.update(1)
-                global_step += 1    
 
             if global_step >= args.max_train_steps:
                 break
