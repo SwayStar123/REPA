@@ -1,3 +1,5 @@
+This repo is a fork of REPA, which I add some stuff to, notable, Contrastive Flow Matching
+
 <h1 align="center"> Representation Alignment for Generation: <br>Training Diffusion Transformers Is Easier Than You Think
 </h1>
 
