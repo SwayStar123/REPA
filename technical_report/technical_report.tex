@@ -1,0 +1,122 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+\usepackage{hyperref}
+
+\title{Implementing Contrastive Flow Matching in Diffusion Models}
+\author{Swayam Bhanded}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report details the implementation of Contrastive Flow Matching ($\Delta$FM), a novel objective function for training diffusion models introduced by Stoica et al. (2025) \cite{stoica2025}. $\Delta$FM enhances conditional image generation by enforcing uniqueness across conditional flows, leading to improved training efficiency and generation quality. We provide a concise guide on integrating $\Delta$FM into an existing diffusion model codebase, highlighting the simplicity of the approach.
+\end{abstract}
+
+\section{Introduction}
+
+Diffusion models have become a cornerstone of modern generative modeling, capable of producing high-fidelity images. A recent advancement in this area is Flow Matching, which trains continuous normalizing flows by regressing probability flow fields between a noise distribution and the data distribution. This method offers straight-line generative trajectories and competitive image synthesis quality.
+
+However, in conditional generation settings, vanilla flow matching can suffer from an ``averaging'' effect, where the model produces samples that represent a mean of possible images for a given condition rather than a distinct mode. This occurs because the standard flow matching objective does not explicitly enforce that flows for different conditions should be distinct.
+
+Contrastive Flow Matching ($\Delta$FM) addresses this limitation by augmenting the standard flow matching objective with a contrastive loss. This new objective encourages the model to generate dissimilar flows for different conditioning inputs, thereby improving the separation between conditional distributions and enhancing the quality and diversity of generated samples.
+
+This report provides a practical guide to implementing $\Delta$FM in a diffusion model, based on the findings of Stoica et al. (2025) \cite{stoica2025}.
+
+\section{Contrastive Flow Matching ($\Delta$FM)}
+
+The core idea behind $\Delta$FM is to introduce a contrastive objective that maximizes the dissimilarity between the predicted flows of different sample pairs.
+
+\subsection{The $\Delta$FM Objective}
+
+The standard conditional flow matching loss is given by:
+
+$$ \mathcal{L}_{cond}^{(FM)}(\theta) = \mathbb{E}[||v_{\theta}(x_{t}, t, y) - (\dot{\alpha}_{t}\hat{x} + \dot{\sigma}_{t}\epsilon)||^{2}] $$
+
+where $\hat{x} \sim p(x|y)$, $v_{\theta}$ is the model, and $x_t$ is the noisy input at time $t$.
+
+Contrastive Flow Matching modifies this objective by introducing a regularization term that pushes the model's predicted flow for a given sample away from the flow of a randomly chosen ``negative'' sample from the same batch. The $\Delta$FM loss is formulated as:
+
+$$ \mathcal{L}^{(\Delta FM)}(\theta) = \mathbb{E}[||v_{\theta}(x_{t}, t, y) - (\dot{\alpha}_{t}\hat{x} + \dot{\sigma}_{t}\epsilon)||^{2} - \lambda||v_{\theta}(x_{t}, t, y) - (\dot{\alpha}_{t}\tilde{x} + \dot{\sigma}_{t}\tilde{\epsilon})||^{2}] $$
+
+where $(\tilde{x}, \tilde{\epsilon})$ is a negative pair, and $\lambda$ is a hyperparameter controlling the strength of the contrastive regularization.
+
+\section{Implementation}
+
+The implementation of $\Delta$FM is remarkably simple and requires minimal changes to a standard diffusion model training pipeline.
+
+\subsection{Calculating the Contrastive Loss}
+
+In the provided \texttt{loss.py}, the contrastive component is calculated as follows:
+
+\begin{verbatim}
+contrastive_flow_target = torch.roll(model_target, 
+                                    shifts=1, dims=0)
+contrastive_flow_loss = mean_flat((model_output - 
+                                 contrastive_flow_target) ** 2)
+\end{verbatim}
+
+Here, \texttt{model\_target} represents the target flow $(\dot{\alpha}_{t}\hat{x} + \dot{\sigma}_{t}\epsilon)$. The \texttt{torch.roll} function with a shift of 1 along the batch dimension (\texttt{dims=0}) effectively creates the negative target $(\dot{\alpha}_{t}\tilde{x} + \dot{\sigma}_{t}\tilde{\epsilon})$. Since the training data is already shuffled at each epoch, a simple circular shift is a computationally efficient way to pair each sample with a random negative sample from the same batch. This satisfies the requirement from the paper that the negative sample is an arbitrary sample pair.
+
+\subsection{Integrating into the Main Loss}
+
+The final loss computation in \texttt{train.py} combines the standard denoising loss, a projection loss (if used), and the new contrastive flow loss:
+
+\begin{verbatim}
+contrastive_flow_loss_mean = contrastive_flow_loss.mean()
+loss = (loss_mean - contrastive_flow_loss_mean * 
+        args.contrastive_flow_coeff) + 
+       proj_loss_mean * args.proj_coeff
+\end{verbatim}
+
+It is important to note that the contrastive loss, scaled by the parameter \texttt{args.contrastive\_flow\_coeff} (which corresponds to $\lambda$), is subtracted directly from the primary denoising loss (\texttt{loss\_mean}). This is distinct from subtracting it from the sum of all loss components. This ensures that the contrastive term specifically regularizes the flow matching objective.
+
+\section{Results}
+
+\subsection{Visual Results}
+
+Figure \ref{fig:generated_examples} shows example generated images from our SiT-XL/2 model trained for 250k steps with $\Delta$FM objective, sampled with NFE 50, no CFG, using Euler sampling.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth]{250k-train-steps_50NFE_NO-CFG.png}
+\caption{Generated images from SiT-XL/2 model trained for 250k steps with $\Delta$FM.}
+\label{fig:generated_examples}
+\end{figure}
+
+\subsection{Quantitative Results}
+
+Table \ref{tab:fid_results} presents the FID scores for our REPA SiT-XL/2 implementation with $\Delta$FM compared to reported baselines. All models were trained for 400k training steps with batch size 256.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|c|}
+\hline
+\textbf{Method} & \textbf{FID} \\
+\hline
+REPA SiT-XL/2 + $\Delta$FM \textit{(Reported)} & 7.29 \\
+REPA SiT-XL/2 + $\Delta$FM \textit{(Replicated)} & 6.2 \\
+REPA SiT-XL/2 + $\Delta$FM + CFG \textit{(Replicated)} & 4.04 \\
+\hline
+\end{tabular}
+\caption{FID scores for different configurations of our REPA SiT-XL/2 implementation trained for 400k steps at batch size 256.}
+\label{tab:fid_results}
+\end{table}
+
+\textbf{Note:} The CFG configuration for the 4.04 FID score uses 1.85 CFG strength, with CFG scheduled between timesteps 0 and 0.65.
+
+\section{Conclusion}
+
+Contrastive Flow Matching is a powerful yet simple modification to the standard flow matching objective for training diffusion models. As demonstrated, its implementation requires only a few additional lines of code. By enforcing dissimilarity between conditional flows, $\Delta$FM leads to significant improvements in image quality, training speed, and denoising efficiency, as empirically validated by Stoica et al. (2025). This makes it a valuable and easily integrable technique for researchers and practitioners working with generative models.
+
+\begin{thebibliography}{99}
+
+\bibitem{stoica2025}
+Stoica, G., Ramanujan, V., Fan, X., Farhadi, A., Krishna, R., \& Hoffman, J. (2025). Contrastive Flow Matching. arXiv preprint arXiv:2506.05350.
+
+\end{thebibliography}
+
+\end{document}
