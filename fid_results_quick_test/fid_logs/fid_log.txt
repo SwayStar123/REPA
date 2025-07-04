@@ -1,0 +1,35 @@
+[[34m2025-07-01 18:42:12[0m] Starting FID calculation
+[[34m2025-07-01 18:46:04[0m] Starting FID calculation
+[[34m2025-07-01 18:46:05[0m] using MLP layer as FFN
+[[34m2025-07-01 18:46:16[0m] SiT Parameters: 683,242,512
+[[34m2025-07-01 18:46:16[0m] Loading checkpoint from exps/linear-dinov2-b-enc8/checkpoints/0400000.pt
+[[34m2025-07-01 21:19:29[0m] Starting FID calculation
+[[34m2025-07-01 21:21:30[0m] Starting FID calculation
+[[34m2025-07-01 21:22:17[0m] Starting FID calculation
+[[34m2025-07-01 21:22:18[0m] using MLP layer as FFN
+[[34m2025-07-01 21:24:46[0m] Starting FID calculation
+[[34m2025-07-01 21:24:48[0m] using MLP layer as FFN
+[[34m2025-07-01 21:24:55[0m] SiT Parameters: 683,242,512
+[[34m2025-07-01 21:24:55[0m] Loading checkpoint from exps/linear-dinov2-b-enc8/checkpoints/0400000.pt
+[[34m2025-07-01 21:25:49[0m] Starting FID calculation
+[[34m2025-07-01 21:25:50[0m] using MLP layer as FFN
+[[34m2025-07-01 21:25:58[0m] SiT Parameters: 683,242,512
+[[34m2025-07-01 21:25:58[0m] Loading checkpoint from exps/linear-dinov2-b-enc8/checkpoints/0400000.pt
+[[34m2025-07-01 21:26:45[0m] Starting FID calculation
+[[34m2025-07-01 21:26:46[0m] using MLP layer as FFN
+[[34m2025-07-01 21:26:56[0m] SiT Parameters: 683,242,512
+[[34m2025-07-01 21:26:56[0m] Loading checkpoint from exps/linear-dinov2-b-enc8/checkpoints/0400000.pt
+[[34m2025-07-01 21:27:03[0m] Validation dataset contains 50,000 images (dataset/validation)
+[[34m2025-07-01 21:27:03[0m] Calculating FID with steps=50, cfg_scale=1.85, guidance_low=0.0, guidance_high=0.65
+[[34m2025-07-01 21:39:55[0m] Starting FID calculation
+[[34m2025-07-01 21:39:55[0m] using MLP layer as FFN
+[[34m2025-07-01 21:40:03[0m] SiT Parameters: 683,242,512
+[[34m2025-07-01 21:40:03[0m] Loading checkpoint from exps/linear-dinov2-b-enc8/checkpoints/0400000.pt
+[[34m2025-07-01 21:40:10[0m] Validation dataset contains 50,000 images (dataset/validation)
+[[34m2025-07-01 21:40:10[0m] Calculating FID with steps=50, cfg_scale=1.85, guidance_low=0.0, guidance_high=0.65
+[[34m2025-07-01 21:49:25[0m] FID Score (steps=50, cfg=1.85, g_low=0.0, g_high=0.65): 4.0464
+[[34m2025-07-01 21:49:25[0m] Results saved to fid_results_quick_test/fid_results.json
+[[34m2025-07-01 21:49:25[0m] === FID Results Summary ===
+[[34m2025-07-01 21:49:25[0m] steps_50_cfg_1.85_glow_0.0_ghigh_0.65: 4.0464
+[[34m2025-07-01 21:49:25[0m] Best configuration: steps_50_cfg_1.85_glow_0.0_ghigh_0.65 with FID: 4.0464
+[[34m2025-07-01 21:49:25[0m] FID calculation completed!

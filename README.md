@@ -52,7 +52,7 @@ accelerate launch train.py \
   --encoder-depth=8 \
   --output-dir="exps" \
   --exp-name="linear-dinov2-b-enc8" \
-  --data-dir=[YOUR_DATA_PATH]
+  --data-dir=dataset
 ```
 
 Then this script will automatically create the folder in `exps` to save logs and checkpoints. You can adjust the following options:
@@ -136,6 +136,22 @@ torchrun --nnodes=1 --nproc_per_node=8 generate.py \
 ```
 
 We also provide the SiT-XL/2 checkpoint (trained for 4M iterations) used in the final evaluation. It will be automatically downloaded if you do not specify `--ckpt`.
+
+To calculate FID
+
+```
+sudo accelerate launch calculate_fid.py \
+    --checkpoint-path "exps/linear-dinov2-b-enc8/checkpoints/0400000.pt" \
+    --data-dir "dataset/validation" \
+    --model "SiT-XL/2" \
+    --steps "[50]" \
+    --cfg-scale "[1.85]" \
+    --guidance-low "[0.0]" \
+    --guidance-high "[0.65]" \
+    --num-samples 50000 \
+    --batch-size 256 \
+    --output-dir "fid_results_quick_test" 
+```
 
 ### Note
 

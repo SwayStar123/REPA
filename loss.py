@@ -87,4 +87,7 @@ class SILoss:
                 proj_loss += mean_flat(-(z_j * z_tilde_j).sum(dim=-1))
         proj_loss /= (len(zs) * bsz)
 
-        return denoising_loss, proj_loss
+        contrastive_flow_target = torch.roll(model_target, shifts=1, dims=0)
+        contrastive_flow_loss = mean_flat((model_output - contrastive_flow_target) ** 2)
+
+        return denoising_loss, proj_loss, contrastive_flow_loss

@@ -13,6 +13,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint
 from tqdm.auto import tqdm
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -92,10 +93,22 @@ def free_gpu_memory(*tensors):
             pass
 
 @torch.no_grad()
-def calculate_fid(model, vae, train_dataloader, encoders, encoder_types, architectures, accelerator, args, num_samples=50000, latents_scale=None, latents_bias=None):
+def calculate_fid(model, vae, val_dataloader, accelerator, args, num_samples=50000, latents_scale=None, latents_bias=None):
     """
-    Calculate FID score using generated and real images across all GPUs.
+    Calculate FID score using generated and real images from validation set across all GPUs.
     """
+    if args.mixed_precision == "fp16":
+        dtype = torch.float16
+    elif args.mixed_precision == "bf16":
+        dtype = torch.bfloat16
+    else:
+        dtype = torch.float32
+
+    if latents_scale is not None:
+        latents_scale = latents_scale.to(accelerator.device, dtype=dtype)
+    if latents_bias is not None:
+        latents_bias = latents_bias.to(accelerator.device, dtype=dtype)
+
     model.eval()
     
     # Initialize FID metric on each GPU
@@ -105,33 +118,28 @@ def calculate_fid(model, vae, train_dataloader, encoders, encoder_types, archite
     
     # Calculate samples per process
     samples_per_process = num_samples // accelerator.num_processes
-    local_batch_size = args.batch_size // accelerator.num_processes
     
     # Move VAE to device
     vae = vae.to(accelerator.device)
     
     samples_processed = 0
     
-    try:
-        for raw_image, x, y in train_dataloader:
-            if samples_processed >= samples_per_process:
-                break
-                
-            raw_image = raw_image.to(accelerator.device, non_blocking=True)
-            x = x.squeeze(dim=1).to(accelerator.device, non_blocking=True)
-            y = y.to(accelerator.device, non_blocking=True)
+    for raw_image, x, y in tqdm(val_dataloader, desc="Calculating FID", disable=not accelerator.is_main_process, total=samples_per_process//(args.batch_size//accelerator.num_processes*8)):
+        if samples_processed >= samples_per_process:
+            break
             
-            batch_size = x.shape[0]
-            
-            # Process real images
-            with torch.no_grad():
-                real_latents = sample_posterior(x, latents_scale=latents_scale, latents_bias=latents_bias)
-                real_images = vae.decode((real_latents - latents_bias) / latents_scale).sample.clamp(-1, 1)
-                
-                # Generate fake images
-                noise = torch.randn_like(real_latents)
-                from samplers import euler_sampler
-                fake_latents = euler_sampler(
+        raw_image = raw_image.to(accelerator.device, non_blocking=True)
+        x = x.squeeze(dim=1).to(accelerator.device, non_blocking=True)
+        y = y.to(accelerator.device, non_blocking=True)
+        
+        batch_size = x.shape[0]
+        
+        with torch.no_grad():
+            # Create noise on the correct device
+            noise = torch.randn(x.shape[0], 4, x.shape[2], x.shape[3], device=accelerator.device, dtype=dtype)
+            from samplers import euler_maruyama_sampler
+            with accelerator.autocast():
+                fake_latents = euler_maruyama_sampler(
                     model, 
                     noise, 
                     y,
@@ -142,46 +150,33 @@ def calculate_fid(model, vae, train_dataloader, encoders, encoder_types, archite
                     path_type=args.path_type,
                     heun=False,
                 )
-                fake_images = vae.decode((fake_latents - latents_bias) / latents_scale).sample.clamp(-1, 1)
             
-            # Convert to uint8 for FID calculation
-            real_images_uint8 = rescaler_to_uint8(rescaler_to_0_1(real_images))
-            fake_images_uint8 = rescaler_to_uint8(rescaler_to_0_1(fake_images))
-            
-            # Update FID
-            fid.update(real_images_uint8, real=True)
-            fid.update(fake_images_uint8, real=False)
-            
-            free_gpu_memory(
-                raw_image,
-                x,
-                y,
-                real_latents,
-                real_images,
-                fake_latents,
-                fake_images,
-                real_images_uint8,
-                fake_images_uint8,
-            )
+                fake_images = vae.decode(((fake_latents - latents_bias) / latents_scale).to(dtype=dtype)).sample.clamp(-1, 1)
 
-            samples_processed += batch_size
-            
-    except Exception as e:
-        if accelerator.is_main_process:
-            logger.warning(f"Error during FID calculation: {e}")
-        return float('inf')
+        # Convert to uint8 for FID calculation
+        fake_images_uint8 = rescaler_to_uint8(rescaler_to_0_1(fake_images))
+        
+        # Update FID
+        fid.update(raw_image, real=True)
+        fid.update(fake_images_uint8, real=False)
+
+        free_gpu_memory(
+            raw_image,
+            x,
+            y,
+            fake_latents,
+            fake_images,
+            fake_images_uint8,
+        )
+
+        samples_processed += batch_size
     
     # Synchronize across all processes
     accelerator.wait_for_everyone()
     
     # Compute FID score
-    try:
-        fid_score = fid.compute()
-        fid_value = fid_score.item() if torch.is_tensor(fid_score) else fid_score
-    except Exception as e:
-        if accelerator.is_main_process:
-            logger.warning(f"Error computing FID: {e}")
-        fid_value = float('inf')
+    fid_score = fid.compute()
+    fid_value = fid_score.item() if torch.is_tensor(fid_score) else fid_score
     
     # Cleanup
     del fid
@@ -325,7 +320,8 @@ def main(args):
     )    
     
     # Setup data:
-    train_dataset = CustomDataset(args.data_dir)
+    train_dataset = CustomDataset(os.path.join(args.data_dir, "train"))
+    val_dataset = CustomDataset(os.path.join(args.data_dir, "validation"))
     local_batch_size = int(args.batch_size // accelerator.num_processes)
     train_dataloader = DataLoader(
         train_dataset,
@@ -335,8 +331,27 @@ def main(args):
         pin_memory=True,
         drop_last=True
     )
+    
+    # Create distributed sampler for validation dataset to ensure even distribution across GPUs
+    val_sampler = DistributedSampler(
+        val_dataset,
+        num_replicas=accelerator.num_processes,
+        rank=accelerator.process_index,
+        shuffle=False,  # Keep deterministic order for consistent validation
+        drop_last=False
+    )
+    
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=local_batch_size*8,
+        sampler=val_sampler,  # Use distributed sampler instead of shuffle
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=False
+    )
     if accelerator.is_main_process:
-        logger.info(f"Dataset contains {len(train_dataset):,} images ({args.data_dir})")
+        logger.info(f"Train dataset contains {len(train_dataset):,} images ({os.path.join(args.data_dir, 'train')})")
+        logger.info(f"Validation dataset contains {len(val_dataset):,} images ({os.path.join(args.data_dir, 'validation')})")
     
     # Prepare models for training:
     update_ema(ema, model, decay=0)  # Ensure EMA is initialized with synced weights
@@ -350,6 +365,7 @@ def main(args):
         ckpt = torch.load(
             f'{os.path.join(args.output_dir, args.exp_name)}/checkpoints/{ckpt_name}',
             map_location='cpu',
+            weights_only=False,
             )
         model.load_state_dict(ckpt['model'])
         ema.load_state_dict(ckpt['ema'])
@@ -420,10 +436,11 @@ def main(args):
 
             with accelerator.accumulate(model):
                 model_kwargs = dict(y=labels)
-                loss, proj_loss = loss_fn(model, x, model_kwargs, zs=zs)
+                loss, proj_loss, contrastive_flow_loss = loss_fn(model, x, model_kwargs, zs=zs)
                 loss_mean = loss.mean()
                 proj_loss_mean = proj_loss.mean()
-                loss = loss_mean + proj_loss_mean * args.proj_coeff
+                contrastive_flow_loss_mean = contrastive_flow_loss.mean()
+                loss = (loss_mean - contrastive_flow_loss_mean * args.contrastive_flow_coeff) + proj_loss_mean * args.proj_coeff
                     
                 ## optimization
                 accelerator.backward(loss)
@@ -439,19 +456,21 @@ def main(args):
             ### enter
             if accelerator.sync_gradients:
                 progress_bar.update(1)
-                global_step += 1                
-            if global_step % args.checkpointing_steps == 0 and global_step > 0:
+                global_step += 1    
+
+            if global_step % args.checkpointing_steps == 0:
                 # Calculate FID before saving checkpoint (if enabled)
                 if args.enable_fid:
                     accelerator.wait_for_everyone()
                     if accelerator.is_main_process:
                         logger.info(f"Calculating FID at step {global_step}")
                     
-                    fid_score = calculate_fid(
-                        ema, vae, train_dataloader, encoders, encoder_types, architectures,
-                        accelerator, args, num_samples=args.fid_samples, 
-                        latents_scale=latents_scale, latents_bias=latents_bias
-                    )
+                    with accelerator.autocast():
+                        fid_score = calculate_fid(
+                            ema, vae, val_dataloader,
+                            accelerator, args, num_samples=args.fid_samples, 
+                            latents_scale=latents_scale, latents_bias=latents_bias
+                        )
                     
                     if accelerator.is_main_process:
                         logger.info(f"FID Score: {fid_score:.4f}")
@@ -471,16 +490,17 @@ def main(args):
                     logger.info(f"Saved checkpoint to {checkpoint_path}")
 
             if (global_step == 1 or (global_step % args.sampling_steps == 0 and global_step > 0)):
-                from samplers import euler_sampler
+                vae = vae.to(device)
+                from samplers import euler_maruyama_sampler
                 with torch.no_grad():
-                    samples = euler_sampler(
-                        model, 
+                    samples = euler_maruyama_sampler(
+                        ema, 
                         xT, 
                         ys,
                         num_steps=50, 
-                        cfg_scale=4.0,
+                        cfg_scale=1.85,
                         guidance_low=0.,
-                        guidance_high=1.,
+                        guidance_high=0.65,
                         path_type=args.path_type,
                         heun=False,
                     ).to(torch.float32)
@@ -491,15 +511,16 @@ def main(args):
                 out_samples = accelerator.gather(samples.to(torch.float32))
                 gt_samples = accelerator.gather(gt_samples.to(torch.float32))
                 
-                # Log to wandb more rarely, due to storage limits
-                if global_step % 10000 == 0:
-                    accelerator.log({"samples": wandb.Image(array2grid(out_samples)),
-                                     "gt_samples": wandb.Image(array2grid(gt_samples))})
+                vae = vae.to("cpu")
+
+                accelerator.log({"samples": wandb.Image(array2grid(out_samples)),
+                                    "gt_samples": wandb.Image(array2grid(gt_samples))}, step=global_step)
                 logging.info("Generating EMA samples done.")
 
             logs = {
                 "loss": accelerator.gather(loss_mean).mean().detach().item(), 
                 "proj_loss": accelerator.gather(proj_loss_mean).mean().detach().item(),
+                "contrastive_flow_loss": accelerator.gather(contrastive_flow_loss_mean).mean().detach().item(),
                 "grad_norm": accelerator.gather(grad_norm).mean().detach().item()
             }
             progress_bar.set_postfix(**logs)
@@ -569,11 +590,12 @@ def parse_args(input_args=None):
     parser.add_argument("--cfg-prob", type=float, default=0.1)
     parser.add_argument("--enc-type", type=str, default='dinov2-vit-b')
     parser.add_argument("--proj-coeff", type=float, default=0.5)
+    parser.add_argument("--contrastive-flow-coeff", type=float, default=0.05)
     parser.add_argument("--weighting", default="uniform", type=str, help="Max gradient norm.")
     parser.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=False)
 
     # Evaluation parameters
-    parser.add_argument("--enable-fid", action="store_true", default=False, help="Enable FID calculation during checkpointing")
+    parser.add_argument("--enable-fid", action="store_true", default=True, help="Enable FID calculation during checkpointing")
     parser.add_argument("--fid-samples", type=int, default=50000, help="Number of samples for FID calculation")
 
     if input_args is not None:
