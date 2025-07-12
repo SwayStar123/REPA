@@ -124,7 +124,7 @@ def calculate_fid(model, vae, val_dataloader, accelerator, args, num_samples=500
     
     samples_processed = 0
     
-    for raw_image, x, y in tqdm(val_dataloader, desc="Calculating FID", disable=not accelerator.is_main_process, total=samples_per_process//(args.batch_size//accelerator.num_processes*8)):
+    for raw_image, x, y in tqdm(val_dataloader, desc="Calculating FID", disable=not accelerator.is_main_process, total=samples_per_process//(args.batch_size//accelerator.num_processes)):
         if samples_processed >= samples_per_process:
             break
             
@@ -137,9 +137,9 @@ def calculate_fid(model, vae, val_dataloader, accelerator, args, num_samples=500
         with torch.no_grad():
             # Create noise on the correct device
             noise = torch.randn(x.shape[0], 4, x.shape[2], x.shape[3], device=accelerator.device, dtype=dtype)
-            from samplers import euler_maruyama_sampler
+            from samplers import euler_sampler
             with accelerator.autocast():
-                fake_latents = euler_maruyama_sampler(
+                fake_latents = euler_sampler(
                     model, 
                     noise, 
                     y,
@@ -343,7 +343,7 @@ def main(args):
     
     val_dataloader = DataLoader(
         val_dataset,
-        batch_size=local_batch_size*8,
+        batch_size=local_batch_size,
         sampler=val_sampler,  # Use distributed sampler instead of shuffle
         num_workers=args.num_workers,
         pin_memory=True,
@@ -456,10 +456,22 @@ def main(args):
             ### enter
             if accelerator.sync_gradients:
                 progress_bar.update(1)
-                global_step += 1    
+                global_step += 1
 
             if global_step % args.checkpointing_steps == 0:
-                # Calculate FID before saving checkpoint (if enabled)
+                if accelerator.is_main_process:
+                    checkpoint = {
+                        "model": model.module.state_dict() if accelerator.num_processes > 1 else model.state_dict(),
+                        "ema": ema.state_dict(),
+                        "opt": optimizer.state_dict(),
+                        "args": args,
+                        "steps": global_step,
+                    }
+                    checkpoint_path = f"{checkpoint_dir}/{global_step:07d}.pt"
+                    torch.save(checkpoint, checkpoint_path)
+                    logger.info(f"Saved checkpoint to {checkpoint_path}")
+
+                # Calculate FID
                 if args.enable_fid:
                     accelerator.wait_for_everyone()
                     if accelerator.is_main_process:
@@ -476,24 +488,12 @@ def main(args):
                         logger.info(f"FID Score: {fid_score:.4f}")
                         # Log FID to wandb
                         accelerator.log({"fid_score": fid_score}, step=global_step)
-                
-                if accelerator.is_main_process:
-                    checkpoint = {
-                        "model": model.module.state_dict(),
-                        "ema": ema.state_dict(),
-                        "opt": optimizer.state_dict(),
-                        "args": args,
-                        "steps": global_step,
-                    }
-                    checkpoint_path = f"{checkpoint_dir}/{global_step:07d}.pt"
-                    torch.save(checkpoint, checkpoint_path)
-                    logger.info(f"Saved checkpoint to {checkpoint_path}")
 
             if (global_step == 1 or (global_step % args.sampling_steps == 0 and global_step > 0)):
                 vae = vae.to(device)
-                from samplers import euler_maruyama_sampler
+                from samplers import euler_sampler
                 with torch.no_grad():
-                    samples = euler_maruyama_sampler(
+                    samples = euler_sampler(
                         ema, 
                         xT, 
                         ys,

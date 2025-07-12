@@ -48,7 +48,7 @@ accelerate launch train.py \
   --path-type="linear" \
   --prediction="v" \
   --weighting="uniform" \
-  --model="SiT-XL/2" \
+  --model="SiT-B/2" \
   --enc-type="dinov2-vit-b" \
   --proj-coeff=0.5 \
   --encoder-depth=8 \

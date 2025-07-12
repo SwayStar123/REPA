@@ -3,6 +3,8 @@ import json
 import os
 import xml.etree.ElementTree as ET
 from typing import List
+import multiprocessing as mp
+from functools import partial
 
 import tqdm
 
@@ -18,19 +20,66 @@ def collect_png_files(root_dir: str) -> List[str]:
     return sorted(files)
 
 
-def build_synset_mapping(xml_dir: str) -> dict[str, int]:
-    """Build synset -> class_idx mapping using alphabetical ordering of synset ids in xml_dir."""
-    synsets = set()
-    for xml_fname in os.listdir(xml_dir):
-        if not xml_fname.endswith('.xml'):
-            continue
-        tree = ET.parse(os.path.join(xml_dir, xml_fname))
+def parse_xml_worker(xml_path: str) -> tuple[str, str]:
+    """Worker function to parse a single XML file and extract synset."""
+    try:
+        tree = ET.parse(xml_path)
         elem = tree.find('.//object/name')
         if elem is None or elem.text is None:
-            continue
-        synsets.add(elem.text.strip())
+            return os.path.basename(xml_path), None
+        return os.path.basename(xml_path), elem.text.strip()
+    except Exception as e:
+        print(f"Error parsing {xml_path}: {e}")
+        return os.path.basename(xml_path), None
+
+
+def build_synset_mapping(xml_dir: str, workers: int = 32) -> dict[str, int]:
+    """Build synset -> class_idx mapping using alphabetical ordering of synset ids in xml_dir."""
+    xml_files = [f for f in os.listdir(xml_dir) if f.endswith('.xml')]
+    xml_paths = [os.path.join(xml_dir, f) for f in xml_files]
+    
+    synsets = set()
+    print(f"Parsing {len(xml_files)} XML files with {workers} workers...")
+    
+    with mp.Pool(workers) as pool:
+        results = pool.map(parse_xml_worker, xml_paths)
+    
+    for xml_fname, synset in results:
+        if synset is not None:
+            synsets.add(synset)
+    
     sorted_synsets = sorted(synsets)
     return {synset: idx for idx, synset in enumerate(sorted_synsets)}
+
+
+def process_image_worker(args: tuple) -> tuple[int, str, int]:
+    """Worker function to process a single image and extract its label."""
+    idx, rel_png, xml_dir, synset_to_class = args
+    
+    try:
+        # Get sorted XML files (this is consistent across all workers)
+        xml_files_sorted = sorted(os.listdir(xml_dir))
+        if idx >= len(xml_files_sorted):
+            raise IndexError(f'Image index {idx} exceeds XML files count {len(xml_files_sorted)}')
+        
+        xml_path = os.path.join(xml_dir, xml_files_sorted[idx])
+        tree = ET.parse(xml_path)
+        elem = tree.find('.//object/name')
+        
+        if elem is None or elem.text is None:
+            raise RuntimeError(f'Missing synset in {xml_files_sorted[idx]}')
+        
+        synset = elem.text.strip()
+        
+        if synset not in synset_to_class:
+            raise RuntimeError(f'Unknown synset {synset} in {xml_files_sorted[idx]}')
+        
+        label = synset_to_class[synset]
+        return idx, rel_png, label
+    
+    except Exception as e:
+        print(f"Error processing image {idx} ({rel_png}): {e}")
+        return idx, rel_png, None
 
 
 def parse_args():
@@ -38,6 +87,8 @@ def parse_args():
     parser.add_argument('--images-dir', required=True, help='Path to processed validation images directory (root that contains 00000/, 00001/, ...)')
     parser.add_argument('--xml-dir', required=True, help='Path to ILSVRC/Annotations/CLS-LOC/val directory with XML files')
     parser.add_argument('--output', default='dataset.json', help='Output JSON filename (relative to images-dir)')
+    parser.add_argument('--workers', type=int, default=32, help='Number of parallel workers for processing')
+    parser.add_argument('--batch-size', type=int, default=1000, help='Batch size for processing images')
     return parser.parse_args()
 
 
@@ -47,36 +98,38 @@ def main():
     images_dir = args.images_dir
     xml_dir = args.xml_dir
     output_fname = os.path.join(images_dir, args.output)
+    workers = args.workers
+    batch_size = args.batch_size
 
     print('Collecting PNG files...')
     png_files = collect_png_files(images_dir)
     print(f'Found {len(png_files)} images')
 
     print('Building synset mapping...')
-    synset_to_class = build_synset_mapping(xml_dir)
+    synset_to_class = build_synset_mapping(xml_dir, workers)
     print(f'Detected {len(synset_to_class)} unique synsets')
 
-    print('Generating labels...')
+    print(f'Processing images with {workers} workers in batches of {batch_size}...')
     labels_list = [None] * len(png_files)
-    for idx, rel_png in tqdm.tqdm(list(enumerate(png_files)), desc='Processing images'):
-        # Derive corresponding xml filename from original JPEG base name embedded in PNG name.
-        # We assume original file order was preserved: idx matches order of sorted XML names.
-        base_png = os.path.basename(rel_png)
-        jpeg_stub = os.path.splitext(base_png)[0]  # img00000001 -> img00000001
-        # But we don't have original JPEG name; fallback: pick xml by index order
-        xml_files_sorted = sorted(os.listdir(xml_dir))
-        if idx >= len(xml_files_sorted):
-            raise IndexError('Mismatch between number of images and xml files')
-        xml_path = os.path.join(xml_dir, xml_files_sorted[idx])
-        tree = ET.parse(xml_path)
-        elem = tree.find('.//object/name')
-        if elem is None or elem.text is None:
-            raise RuntimeError(f'Missing synset in {xml_files_sorted[idx]}')
-        synset = elem.text.strip()
-        label = synset_to_class[synset]
-        labels_list[idx] = [rel_png, label]
+    
+    # Process images in batches to avoid memory issues
+    for batch_start in tqdm.tqdm(range(0, len(png_files), batch_size), desc='Processing batches'):
+        batch_end = min(batch_start + batch_size, len(png_files))
+        batch_args = [
+            (idx, png_files[idx], xml_dir, synset_to_class) 
+            for idx in range(batch_start, batch_end)
+        ]
+        
+        with mp.Pool(workers) as pool:
+            batch_results = pool.map(process_image_worker, batch_args)
+        
+        # Store results
+        for idx, rel_png, label in batch_results:
+            if label is None:
+                raise RuntimeError(f'Failed to process image {idx} ({rel_png})')
+            labels_list[idx] = [rel_png, label]
 
-    assert all(entry is not None for entry in labels_list)
+    assert all(entry is not None for entry in labels_list), "Some labels were not processed"
 
     with open(output_fname, 'w') as f:
         json.dump({'labels': labels_list}, f)
@@ -84,4 +137,5 @@ def main():
 
 
 if __name__ == '__main__':
+    mp.set_start_method('spawn', force=True)  # Required for robust multiprocessing
     main() 
