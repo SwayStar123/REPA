@@ -78,7 +78,7 @@ def main(args):
         assert int(args.projector_embed_dims.split(',')[0]) == 768
         state_dict = download_model('last.pt')
     else:
-        state_dict = torch.load(ckpt_path, map_location=f'cuda:{device}')['ema']
+        state_dict = torch.load(ckpt_path, map_location=f'cuda:{device}', weights_only=False)['ema']
     if args.legacy:
         state_dict = load_legacy_checkpoints(
             state_dict=state_dict, encoder_depth=args.encoder_depth
@@ -93,7 +93,7 @@ def main(args):
     model_string_name = args.model.replace("/", "-")
     ckpt_string_name = os.path.basename(args.ckpt).replace(".pt", "") if args.ckpt else "pretrained"
     folder_name = f"{model_string_name}-{ckpt_string_name}-size-{args.resolution}-vae-{args.vae}-" \
-                  f"cfg-{args.cfg_scale}-seed-{args.global_seed}-{args.mode}"
+                  f"cfg-{args.cfg_scale}-seed-{args.global_seed}-{args.mode}-{args.num_steps}steps"
     sample_folder_dir = f"{args.sample_dir}/{folder_name}"
     if rank == 0:
         os.makedirs(sample_folder_dir, exist_ok=True)
@@ -205,6 +205,7 @@ if __name__ == "__main__":
     parser.add_argument("--heun", action=argparse.BooleanOptionalAction, default=False) # only for ode
     parser.add_argument("--guidance-low", type=float, default=0.)
     parser.add_argument("--guidance-high", type=float, default=1.)
+    parser.add_argument('--local-rank', default=-1, type=int)
 
     # will be deprecated
     parser.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=False) # only for ode

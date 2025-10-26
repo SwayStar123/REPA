@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import torch.nn.functional as F
+import math
 
 def mean_flat(x):
     """
@@ -24,6 +25,7 @@ class SILoss:
             accelerator=None, 
             latents_scale=None, 
             latents_bias=None,
+            cfm_schedule="uniform",
             ):
         self.prediction = prediction
         self.weighting = weighting
@@ -32,6 +34,7 @@ class SILoss:
         self.accelerator = accelerator
         self.latents_scale = latents_scale
         self.latents_bias = latents_bias
+        self.cfm_schedule = get_schedule(cfm_schedule)
 
     def interpolant(self, t):
         if self.path_type == "linear":
@@ -87,4 +90,71 @@ class SILoss:
                 proj_loss += mean_flat(-(z_j * z_tilde_j).sum(dim=-1))
         proj_loss /= (len(zs) * bsz)
 
-        return denoising_loss, proj_loss
+        cfm_target = torch.roll(model_target, shifts=1, dims=0)
+        cfm_loss = -(((model_output - cfm_target) ** 2) * self.cfm_schedule(time_input)).mean()
+
+        return denoising_loss, proj_loss, cfm_loss
+
+def get_schedule(schedule_type):
+    if schedule_type == "uniform":
+        return uniform_schedule
+    elif schedule_type == "linear":
+        return linear_schedule
+    elif schedule_type == "quadratic":
+        return quadratic_schedule
+    elif schedule_type == "cosine":
+        return cosine_schedule
+    elif schedule_type == "exponential":
+        return exponential_schedule
+    else:
+        raise ValueError(f"Invalid schedule type: {schedule_type}")
+
+def uniform_schedule(t):
+    """
+    No scheduling: s(t) = 1
+    Args:
+        t: time values in [0, 1], can be tensor or scalar
+    Returns:
+        scheduled weights in [0, 1]
+    """
+    return 1
+
+def linear_schedule(t):
+    """
+    Linear scheduling: s(t) = t
+    Args:
+        t: time values in [0, 1], can be tensor or scalar
+    Returns:
+        scheduled weights in [0, 1]
+    """
+    return t
+
+def quadratic_schedule(t):
+    """
+    Quadratic scheduling: s(t) = t²
+    Args:
+        t: time values in [0, 1], can be tensor or scalar
+    Returns:
+        scheduled weights in [0, 1]
+    """
+    return t ** 2
+
+def cosine_schedule(t):
+    """
+    Cosine scheduling: s(t) = 1 - cos(πt/2)
+    Args:
+        t: time values in [0, 1], can be tensor or scalar
+    Returns:
+        scheduled weights in [0, 1]
+    """
+    return 1 - torch.cos(math.pi * t / 2)
+
+def exponential_schedule(t):
+    """
+    Exponential scheduling: s(t) = (e^t - 1)/(e - 1)
+    Args:
+        t: time values in [0, 1], can be tensor or scalar
+    Returns:
+        scheduled weights in [0, 1]
+    """
+    return (torch.exp(t) - 1) / (math.e - 1)

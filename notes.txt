@@ -1,0 +1,8 @@
+CFM weights for schedules:
+
+Uniform: 0.05
+Linear: 0.1
+Quadratic 0.15
+Cosine: 0.138
+Exponential: 0.12
+Baseline: 0.0

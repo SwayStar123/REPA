@@ -1,0 +1,85 @@
+B/2 @ 100k:
+    baseline:
+        50 NFE:
+            Inception Score: 26.724185943603516
+            FID: 55.63916514543132
+            sFID: 12.070186204126571
+            Precision: 0.44156
+            Recall: 0.5882
+        250 NFE:
+            Inception Score: 27.55657958984375
+            FID: 50.929956823186785
+            sFID: 7.714273805461744
+            Precision: 0.45382
+            Recall: 0.5965
+
+    CFMs-
+    uniform: (vanilla cfm)
+        50 NFE:
+            Inception Score: 28.495746612548828
+            FID: 48.16368841097517
+            sFID: 7.207093760402245
+            Precision: 0.461
+            Recall: 0.6007
+        250 NFE:
+            Inception Score: 26.7778377532959
+            FID: 48.71274669398167
+            sFID: 11.829532537992918
+            Precision: 0.44794
+            Recall: 0.5822
+
+    linear:
+        50 NFE:
+            Inception Score: 28.40547752380371
+            FID: 48.501414070197086
+            sFID: 8.857300999566178
+            Precision: 0.45222
+            Recall: 0.5813
+        250 NFE:
+            Inception Score: 26.978673934936523
+            FID: 48.93617152951282
+            sFID: 14.979378761533326
+            Precision: 0.43624
+            Recall: 0.5736
+
+    quadratic:
+        50 NFE:
+            Inception Score: 28.662099838256836
+            FID: 48.62646242475029
+            sFID: 9.862505660905299
+            Precision: 0.44156
+            Recall: 0.5891
+        250 NFE:
+            Inception Score: 27.252182006835938
+            FID: 48.58194270894887
+            sFID: 15.95925673565307
+            Precision: 0.43194
+            Recall: 0.5732
+
+    exponential:
+        50 NFE:
+            Inception Score: 28.548776626586914
+            FID: 48.46652696454811
+            sFID: 8.76582691717249
+            Precision: 0.45002
+            Recall: 0.5827
+        250 NFE:
+            Inception Score: 27.201129913330078
+            FID: 48.54822322911531
+            sFID: 14.50425514107485
+            Precision: 0.43674
+            Recall: 0.5729
+
+    cosine:
+        50 NFE:
+            Inception Score: 28.84316062927246
+            FID: 48.428743658211204
+            sFID: 9.443270438709988
+            Precision: 0.44562
+            Recall: 0.5795
+        250 NFE:
+            Inception Score: 27.4444522857666
+            FID: 48.08959861411802
+            sFID: 15.17528387034929
+            Precision: 0.4362
+            Recall: 0.5747

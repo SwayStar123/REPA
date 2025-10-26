@@ -31,6 +31,8 @@ from torchvision.utils import make_grid
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from torchvision.transforms import Normalize
 
+from PIL import Image
+
 logger = get_logger(__name__)
 
 CLIP_DEFAULT_MEAN = (0.48145466, 0.4578275, 0.40821073)
@@ -135,6 +137,8 @@ def main(args):
         os.makedirs(args.output_dir, exist_ok=True)  # Make results folder (holds all experiment subfolders)
         save_dir = os.path.join(args.output_dir, args.exp_name)
         os.makedirs(save_dir, exist_ok=True)
+        sample_dir = os.path.join(save_dir, "samples")
+        os.makedirs(sample_dir, exist_ok=True)
         args_dict = vars(args)
         # Save to a JSON file
         json_dir = os.path.join(save_dir, "args.json")
@@ -191,15 +195,17 @@ def main(args):
         accelerator=accelerator,
         latents_scale=latents_scale,
         latents_bias=latents_bias,
-        weighting=args.weighting
+        weighting=args.weighting,
+        cfm_schedule=args.cfm_schedule,
     )
     if accelerator.is_main_process:
         logger.info(f"SiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
     
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
     if args.allow_tf32:
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+        # Use new TF32 API (PyTorch 2.0+)
+        torch.backends.cuda.matmul.fp32_precision = 'tf32'
+        torch.backends.cudnn.conv.fp32_precision = 'tf32'
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -248,7 +254,7 @@ def main(args):
     if accelerator.is_main_process:
         tracker_config = vars(copy.deepcopy(args))
         accelerator.init_trackers(
-            project_name="REPA", 
+            project_name="TCFM", 
             config=tracker_config,
             init_kwargs={
                 "wandb": {"name": f"{args.exp_name}"}
@@ -305,11 +311,12 @@ def main(args):
 
             with accelerator.accumulate(model):
                 model_kwargs = dict(y=labels)
-                loss, proj_loss = loss_fn(model, x, model_kwargs, zs=zs)
+                loss, proj_loss, cfm_loss = loss_fn(model, x, model_kwargs, zs=zs)
                 loss_mean = loss.mean()
-                proj_loss_mean = proj_loss.mean()
-                loss = loss_mean + proj_loss_mean * args.proj_coeff
-                    
+                proj_loss_mean = proj_loss.mean() * args.proj_coeff
+                cfm_loss_mean = cfm_loss.mean() * args.cfm_coeff
+                loss = loss_mean + proj_loss_mean + cfm_loss_mean
+
                 ## optimization
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -356,10 +363,20 @@ def main(args):
                     gt_samples = vae.decode((gt_xs - latents_bias) / latents_scale).sample
                     samples = (samples + 1) / 2.
                     gt_samples = (gt_samples + 1) / 2.
+                
                 out_samples = accelerator.gather(samples.to(torch.float32))
                 gt_samples = accelerator.gather(gt_samples.to(torch.float32))
-                accelerator.log({"samples": wandb.Image(array2grid(out_samples)),
-                                 "gt_samples": wandb.Image(array2grid(gt_samples))})
+                
+                if accelerator.is_main_process:
+                    grid = array2grid(out_samples)
+                    Image.fromarray(grid).save(f"{sample_dir}/samples_step_{global_step}.png")
+                    logger.info(f"Saved samples at step {global_step}")
+                    if global_step==1:
+                        gt_grid = array2grid(gt_samples)
+                        Image.fromarray(gt_grid).save(f"{sample_dir}/samples_gt.png")
+                    if global_step % 50000 == 0:
+                        accelerator.log({"samples": wandb.Image(grid, file_type="jpg")}, step=global_step)
+
                 logging.info("Generating EMA samples done.")
 
             logs = {
@@ -391,7 +408,7 @@ def parse_args(input_args=None):
     parser.add_argument("--exp-name", type=str, required=True)
     parser.add_argument("--logging-dir", type=str, default="logs")
     parser.add_argument("--report-to", type=str, default="wandb")
-    parser.add_argument("--sampling-steps", type=int, default=10000)
+    parser.add_argument("--sampling-steps", type=int, default=2000)
     parser.add_argument("--resume-step", type=int, default=0)
 
     # model
@@ -412,7 +429,7 @@ def parse_args(input_args=None):
 
     # optimization
     parser.add_argument("--epochs", type=int, default=1400)
-    parser.add_argument("--max-train-steps", type=int, default=400000)
+    parser.add_argument("--max-train-steps", type=int, default=100000)
     parser.add_argument("--checkpointing-steps", type=int, default=50000)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
@@ -436,6 +453,8 @@ def parse_args(input_args=None):
     parser.add_argument("--proj-coeff", type=float, default=0.5)
     parser.add_argument("--weighting", default="uniform", type=str, help="Max gradient norm.")
     parser.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--cfm-schedule", type=str, default="uniform", choices=["uniform", "linear", "quadratic", "cosine", "exponential"])
+    parser.add_argument("--cfm-coeff", type=float, default=0.05)
 
     if input_args is not None:
         args = parser.parse_args(input_args)
