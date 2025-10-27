@@ -83,3 +83,48 @@ B/2 @ 100k:
             sFID: 15.17528387034929
             Precision: 0.4362
             Recall: 0.5747
+
+XL/2 @ 100k:
+    baseline:
+        50 NFE:
+            Inception Score: 70.41844177246094
+            FID: 20.21132927888459
+            sFID: 5.645184446350868
+            Precision: 0.64032
+            Recall: 0.6157
+        250 NFE:
+            Inception Score: 69.6507568359375
+            FID: 18.961213524857442
+            sFID: 5.907941562967949
+            Precision: 0.65026
+            Recall: 0.607
+
+    cosine:
+        50 NFE:
+            Inception Score: 69.98896026611328
+            FID: 18.76938812799034
+            sFID: 11.22497963027024
+            Precision: 0.64394
+            Recall: 0.5797
+        250 NFE:
+            Inception Score: 63.835609436035156
+            FID: 21.12204579464111
+            sFID: 19.84394404422676
+            Precision: 0.61784
+            Recall: 0.5694
+
+    uniform:
+        50 NFE:
+            Inception Score: 68.5328598022461
+            FID: 19.35104818449514
+            sFID: 8.45831750436514
+            Precision: 0.64472
+            Recall: 0.59
+        250 NFE:
+            Inception Score: 62.286903381347656
+            FID: 21.665421033086773
+            sFID: 15.472722809122615
+            Precision: 0.62308
+            Recall: 0.5779
+
+

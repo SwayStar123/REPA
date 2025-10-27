@@ -2,7 +2,7 @@ NUM_GPUS=8
 random_number=$((RANDOM % 100 + 1200))
 SIZE=XL
 
-# Baseline
+# Linear
 accelerate launch --multi_gpu --num_processes $NUM_GPUS train.py \
     --report-to="wandb" \
     --allow-tf32 \
@@ -15,13 +15,13 @@ accelerate launch --multi_gpu --num_processes $NUM_GPUS train.py \
     --enc-type="dinov2-vit-b" \
     --proj-coeff=0.5 \
     --output-dir="exps" \
-    --exp-name="${SIZE}2-baseline" \
+    --exp-name="${SIZE}2-linear" \
     --batch-size=256 \
     --data-dir="dataset" \
-    --cfm-schedule="uniform" \
-    --cfm-coeff=0.0 \
+    --cfm-schedule="linear" \
+    --cfm-coeff=0.1 \
 
-# Uniform
+# Quadratic
 accelerate launch --multi_gpu --num_processes $NUM_GPUS train.py \
     --report-to="wandb" \
     --allow-tf32 \
@@ -34,13 +34,13 @@ accelerate launch --multi_gpu --num_processes $NUM_GPUS train.py \
     --enc-type="dinov2-vit-b" \
     --proj-coeff=0.5 \
     --output-dir="exps" \
-    --exp-name="${SIZE}2-uniform" \
+    --exp-name="${SIZE}2-quadratic" \
     --batch-size=256 \
     --data-dir="dataset" \
-    --cfm-schedule="uniform" \
-    --cfm-coeff=0.05 \
+    --cfm-schedule="quadratic" \
+    --cfm-coeff=0.15 \
 
-# Cosine
+# Exponential
 accelerate launch --multi_gpu --num_processes $NUM_GPUS train.py \
     --report-to="wandb" \
     --allow-tf32 \
@@ -53,9 +53,9 @@ accelerate launch --multi_gpu --num_processes $NUM_GPUS train.py \
     --enc-type="dinov2-vit-b" \
     --proj-coeff=0.5 \
     --output-dir="exps" \
-    --exp-name="${SIZE}2-cosine" \
+    --exp-name="${SIZE}2-exponential" \
     --batch-size=256 \
     --data-dir="dataset" \
-    --cfm-schedule="cosine" \
-    --cfm-coeff=0.138 \
+    --cfm-schedule="exponential" \
+    --cfm-coeff=0.12 \
 

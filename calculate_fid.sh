@@ -1,7 +1,7 @@
 random_number=$((RANDOM % 100 + 1200))
 NUM_GPUS=8
 STEP="0100000"
-MODEL_SIZE='B'
+MODEL_SIZE='XL'
 CFG_SCALE=1.0
 CLS_CFG_SCALE=1.0
 GH=1.0
@@ -9,12 +9,9 @@ PATCH_SIZE=2
 
 # Experiments to iterate over
 EXPERIMENTS=(
-  b2-baseline
-  b2-cosine
-  b2-exponential
-  b2-linear
-  b2-quadratic
-  b2-uniform
+  XL2-baseline
+  XL2-cosine
+  XL2-uniform
 )
 
 # Number of sampling steps to evaluate
