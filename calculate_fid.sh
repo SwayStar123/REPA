@@ -9,9 +9,9 @@ PATCH_SIZE=2
 
 # Experiments to iterate over
 EXPERIMENTS=(
-  XL2-baseline
-  XL2-cosine
-  XL2-uniform
+  XL2-linear
+  XL2-quadratic
+  XL2-exponential
 )
 
 # Number of sampling steps to evaluate

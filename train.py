@@ -241,6 +241,7 @@ def main(args):
         ckpt = torch.load(
             f'{os.path.join(args.output_dir, args.exp_name)}/checkpoints/{ckpt_name}',
             map_location='cpu',
+            weights_only=False,
             )
         model.load_state_dict(ckpt['model'])
         ema.load_state_dict(ckpt['ema'])
@@ -429,7 +430,7 @@ def parse_args(input_args=None):
 
     # optimization
     parser.add_argument("--epochs", type=int, default=1400)
-    parser.add_argument("--max-train-steps", type=int, default=100000)
+    parser.add_argument("--max-train-steps", type=int, default=400000)
     parser.add_argument("--checkpointing-steps", type=int, default=50000)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
