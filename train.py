@@ -201,11 +201,24 @@ def main(args):
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
+    # VWN: exclude static routing matrices A/B from weight decay
+    decay_params = []
+    nodecay_params = []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if (".A" in name or ".B" in name) and (".S_alpha" not in name) and (".S_beta" not in name):
+            nodecay_params.append(p)
+        else:
+            decay_params.append(p)
+
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        [
+            {"params": decay_params, "weight_decay": args.adam_weight_decay},
+            {"params": nodecay_params, "weight_decay": 0.0},
+        ],
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon,
     )    
     
