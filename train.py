@@ -142,6 +142,8 @@ def main(args):
             json.dump(args_dict, f, indent=4)
         checkpoint_dir = f"{save_dir}/checkpoints"  # Stores saved model checkpoints
         os.makedirs(checkpoint_dir, exist_ok=True)
+        samples_dir = f"{save_dir}/samples"  # Stores generated samples
+        os.makedirs(samples_dir, exist_ok=True)
         logger = create_logger(save_dir)
         logger.info(f"Experiment directory created at {save_dir}")
     device = accelerator.device
@@ -151,8 +153,13 @@ def main(args):
         set_seed(args.seed + accelerator.process_index)
     
     # Create model:
-    assert args.resolution % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
-    latent_size = args.resolution // 8
+    if not args.pixel_space:
+        assert args.resolution % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
+        latent_size = args.resolution // 8
+        in_channels = 4
+    else:
+        latent_size = args.resolution
+        in_channels = 3
 
     if args.enc_type != None:
         encoders, encoder_types, architectures = load_encoders(
@@ -164,16 +171,24 @@ def main(args):
     block_kwargs = {"fused_attn": args.fused_attn, "qk_norm": args.qk_norm}
     model = SiT_models[args.model](
         input_size=latent_size,
+        in_channels=in_channels,
         num_classes=args.num_classes,
         use_cfg = (args.cfg_prob > 0),
         z_dims = z_dims,
         encoder_depth=args.encoder_depth,
+        vwn_enabled=args.vwn_enabled,
+        vwn_m=args.vwn_m,
+        vwn_n=args.vwn_n,
+        vwn_dynamic=args.vwn_dynamic,
         **block_kwargs
     )
 
     model = model.to(device)
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
-    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-mse").to(device)
+    if not args.pixel_space:
+        vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-mse").to(device)
+    else:
+        vae = None
     requires_grad(ema, False)
     
     latents_scale = torch.tensor(
@@ -280,15 +295,21 @@ def main(args):
     sample_batch_size = 64 // accelerator.num_processes
     gt_raw_images, gt_xs, _ = next(iter(train_dataloader))
     assert gt_raw_images.shape[-1] == args.resolution
-    gt_xs = gt_xs[:sample_batch_size]
-    gt_xs = sample_posterior(
-        gt_xs.to(device), latents_scale=latents_scale, latents_bias=latents_bias
-        )
+    
+    if not args.pixel_space:
+        gt_xs = gt_xs[:sample_batch_size]
+        gt_xs = sample_posterior(
+            gt_xs.to(device), latents_scale=latents_scale, latents_bias=latents_bias
+            )
+    else:
+        # Pixel-space: use raw images normalized to [-1, 1]
+        gt_xs = gt_raw_images[:sample_batch_size].to(device) / 127.5 - 1.0
+    
     ys = torch.randint(1000, size=(sample_batch_size,), device=device)
     ys = ys.to(device)
     # Create sampling noise:
     n = ys.size(0)
-    xT = torch.randn((n, 4, latent_size, latent_size), device=device)
+    xT = torch.randn((n, in_channels, latent_size, latent_size), device=device)
         
     for epoch in range(args.epochs):
         model.train()
@@ -306,7 +327,12 @@ def main(args):
             else:
                 labels = y
             with torch.no_grad():
-                x = sample_posterior(x, latents_scale=latents_scale, latents_bias=latents_bias)
+                if not args.pixel_space:
+                    x = sample_posterior(x, latents_scale=latents_scale, latents_bias=latents_bias)
+                else:
+                    # Pixel-space: use raw images normalized to [-1, 1]
+                    x = raw_image / 127.5 - 1.0
+                
                 zs = []
                 with accelerator.autocast():
                     for encoder, encoder_type, arch in zip(encoders, encoder_types, architectures):
@@ -351,8 +377,13 @@ def main(args):
                     torch.save(checkpoint, checkpoint_path)
                     logger.info(f"Saved checkpoint to {checkpoint_path}")
 
-            if (global_step == 1 or (global_step % args.sampling_steps == 0 and global_step > 0)):
+            # Sample generation for disk saving and/or wandb logging
+            should_save_disk = (global_step == 1 or (global_step % args.save_samples_every == 0 and global_step > 0))
+            should_log_wandb = (global_step == 1 or (global_step % args.log_samples_every == 0 and global_step > 0))
+            
+            if should_save_disk or should_log_wandb:
                 from samplers import euler_sampler
+                from PIL import Image
                 with torch.no_grad():
                     samples = euler_sampler(
                         model, 
@@ -365,15 +396,33 @@ def main(args):
                         path_type=args.path_type,
                         heun=False,
                     ).to(torch.float32)
-                    samples = vae.decode((samples -  latents_bias) / latents_scale).sample
-                    gt_samples = vae.decode((gt_xs - latents_bias) / latents_scale).sample
-                    samples = (samples + 1) / 2.
-                    gt_samples = (gt_samples + 1) / 2.
+                    
+                    if not args.pixel_space:
+                        samples = vae.decode((samples -  latents_bias) / latents_scale).sample
+                        gt_samples = vae.decode((gt_xs - latents_bias) / latents_scale).sample
+                        samples = (samples + 1) / 2.
+                        gt_samples = (gt_samples + 1) / 2.
+                    else:
+                        # Pixel-space: already in pixel space, just rescale from [-1, 1] to [0, 1]
+                        samples = (samples + 1) / 2.
+                        gt_samples = (gt_xs + 1) / 2.
+                
                 out_samples = accelerator.gather(samples.to(torch.float32))
                 gt_samples = accelerator.gather(gt_samples.to(torch.float32))
-                accelerator.log({"samples": wandb.Image(array2grid(out_samples)),
-                                 "gt_samples": wandb.Image(array2grid(gt_samples))})
-                logging.info("Generating EMA samples done.")
+                
+                # Save to disk
+                if should_save_disk and accelerator.is_main_process:
+                    sample_grid = array2grid(out_samples)
+                    gt_grid = array2grid(gt_samples)
+                    Image.fromarray(sample_grid).save(f"{samples_dir}/{global_step}.png")
+                    Image.fromarray(gt_grid).save(f"{samples_dir}/{global_step}_gt.png")
+                    logger.info(f"Saved samples to {samples_dir}/{global_step}.png")
+                
+                # Log to wandb
+                if should_log_wandb:
+                    accelerator.log({"samples": wandb.Image(array2grid(out_samples)),
+                                     "gt_samples": wandb.Image(array2grid(gt_samples))})
+                    logging.info("Logged samples to wandb.")
 
             logs = {
                 "loss": accelerator.gather(loss_mean).mean().detach().item(), 
@@ -404,7 +453,8 @@ def parse_args(input_args=None):
     parser.add_argument("--exp-name", type=str, required=True)
     parser.add_argument("--logging-dir", type=str, default="logs")
     parser.add_argument("--report-to", type=str, default="wandb")
-    parser.add_argument("--sampling-steps", type=int, default=10000)
+    parser.add_argument("--save-samples-every", type=int, default=2000, help="Save samples to disk every N steps")
+    parser.add_argument("--log-samples-every", type=int, default=50000, help="Log samples to wandb every N steps")
     parser.add_argument("--resume-step", type=int, default=0)
 
     # model
@@ -413,6 +463,13 @@ def parse_args(input_args=None):
     parser.add_argument("--encoder-depth", type=int, default=8)
     parser.add_argument("--fused-attn", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--qk-norm",  action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--pixel-space", action="store_true", help="Train in pixel space (3ch) instead of VAE latent space (4ch)")
+    
+    # VWN (Virtual Width Network)
+    parser.add_argument("--vwn-enabled", action="store_true", help="Enable Virtual Width Network (GHC)")
+    parser.add_argument("--vwn-m", type=int, default=2, help="VWN fraction parameter m (backbone width divisor)")
+    parser.add_argument("--vwn-n", type=int, default=3, help="VWN expanded width n (virtual width multiplier)")
+    parser.add_argument("--vwn-dynamic", action=argparse.BooleanOptionalAction, default=True, help="Use dynamic VWN routing")
 
     # dataset
     parser.add_argument("--data-dir", type=str, default="../data/imagenet256")

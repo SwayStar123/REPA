@@ -1,0 +1,19 @@
+accelerate launch train.py \
+  --report-to="wandb" \
+  --allow-tf32 \
+  --mixed-precision="bf16" \
+  --seed=0 \
+  --path-type="linear" \
+  --prediction="v" \
+  --weighting="uniform" \
+  --model="SiT-B/16" \
+  --enc-type="dinov2-vit-b" \
+  --proj-coeff=0.5 \
+  --encoder-depth=3 \
+  --output-dir="exps" \
+  --exp-name="VWN--b16-pixel-8x" \
+  --data-dir=dataset \
+  --pixel-space \
+  --vwn-enabled \
+  --vwn-m=4 \
+  --vwn-n=32
