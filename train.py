@@ -18,6 +18,8 @@ from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
 
+from datasets import load_dataset
+
 from models.sit import SiT_models
 from loss import SILoss
 from utils import load_encoders
@@ -116,6 +118,35 @@ def requires_grad(model, flag=True):
 #################################################################################
 #                                  Training Loop                                #
 #################################################################################
+
+
+class HFDatasetWrapper(torch.utils.data.Dataset):
+    """Wrap a Hugging Face dataset to match (raw_image, x, y) API.
+
+    Expects HF examples with keys: 'image', 'vae_moments', 'label'.
+    """
+
+    def __init__(self, hf_dataset):
+        self.ds = hf_dataset
+
+    def __len__(self):
+        return len(self.ds)
+
+    def __getitem__(self, idx):
+        ex = self.ds[idx]
+
+        # image is stored as C x H x W uint8 (from CustomDataset)
+        img = torch.from_numpy(np.array(ex["image"], copy=False)).to(torch.uint8)
+
+        # vae moments
+        x = ex["vae_moments"]
+        x = torch.from_numpy(np.array(x, copy=False)).to(torch.float32)
+        # keep extra dim so existing x.squeeze(1) still works
+        x = x.unsqueeze(0)
+
+        y = torch.tensor(ex["label"], dtype=torch.long)
+        return img, x, y
+
 
 def main(args):    
     # set accelerator
@@ -238,6 +269,8 @@ def main(args):
     )    
     
     # Setup data:
+    # hf_raw = load_dataset(args.hf_dataset, split="train")
+    # train_dataset = HFDatasetWrapper(hf_raw)
     train_dataset = CustomDataset(args.data_dir)
     local_batch_size = int(args.batch_size // accelerator.num_processes)
     train_dataloader = DataLoader(
@@ -473,6 +506,7 @@ def parse_args(input_args=None):
 
     # dataset
     parser.add_argument("--data-dir", type=str, default="../data/imagenet256")
+    parser.add_argument("--hf-dataset", type=str, default="SwayStar123/repa-imagenet-256")
     parser.add_argument("--resolution", type=int, choices=[256, 512], default=256)
     parser.add_argument("--batch-size", type=int, default=256)
 

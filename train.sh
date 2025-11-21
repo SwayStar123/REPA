@@ -12,7 +12,7 @@ accelerate launch train.py \
   --encoder-depth=3 \
   --output-dir="exps" \
   --exp-name="VWN--b16-pixel-8x" \
-  --data-dir=dataset \
+  --data-dir="../dataset" \
   --pixel-space \
   --vwn-enabled \
   --vwn-m=4 \

@@ -586,6 +586,9 @@ def SiT_XL_4(**kwargs):
 def SiT_XL_8(**kwargs):
     return SiT(depth=28, hidden_size=1152, decoder_hidden_size=1152, patch_size=8, num_heads=16, **kwargs)
 
+def SiT_XL_16(**kwargs):
+    return SiT(depth=28, hidden_size=1152, decoder_hidden_size=1152, patch_size=16, num_heads=16, **kwargs)
+
 def SiT_L_2(**kwargs):
     return SiT(depth=24, hidden_size=1024, decoder_hidden_size=1024, patch_size=2, num_heads=16, **kwargs)
 
@@ -594,6 +597,9 @@ def SiT_L_4(**kwargs):
 
 def SiT_L_8(**kwargs):
     return SiT(depth=24, hidden_size=1024, decoder_hidden_size=1024, patch_size=8, num_heads=16, **kwargs)
+
+def SiT_L_16(**kwargs):
+    return SiT(depth=24, hidden_size=1024, decoder_hidden_size=1024, patch_size=16, num_heads=16, **kwargs)
 
 def SiT_B_2(**kwargs):
     return SiT(depth=12, hidden_size=768, decoder_hidden_size=768, patch_size=2, num_heads=12, **kwargs)
@@ -604,6 +610,9 @@ def SiT_B_4(**kwargs):
 def SiT_B_8(**kwargs):
     return SiT(depth=12, hidden_size=768, decoder_hidden_size=768, patch_size=8, num_heads=12, **kwargs)
 
+def SiT_B_16(**kwargs):
+    return SiT(depth=12, hidden_size=768, decoder_hidden_size=768, patch_size=16, num_heads=12, **kwargs)
+
 def SiT_S_2(**kwargs):
     return SiT(depth=12, hidden_size=384, patch_size=2, num_heads=6, **kwargs)
 
@@ -613,11 +622,14 @@ def SiT_S_4(**kwargs):
 def SiT_S_8(**kwargs):
     return SiT(depth=12, hidden_size=384, patch_size=8, num_heads=6, **kwargs)
 
+def SiT_S_16(**kwargs):
+    return SiT(depth=12, hidden_size=384, patch_size=16, num_heads=6, **kwargs)
+
 
 SiT_models = {
-    'SiT-XL/2': SiT_XL_2,  'SiT-XL/4': SiT_XL_4,  'SiT-XL/8': SiT_XL_8,
-    'SiT-L/2':  SiT_L_2,   'SiT-L/4':  SiT_L_4,   'SiT-L/8':  SiT_L_8,
-    'SiT-B/2':  SiT_B_2,   'SiT-B/4':  SiT_B_4,   'SiT-B/8':  SiT_B_8,
-    'SiT-S/2':  SiT_S_2,   'SiT-S/4':  SiT_S_4,   'SiT-S/8':  SiT_S_8,
+    'SiT-XL/2': SiT_XL_2,  'SiT-XL/4': SiT_XL_4,  'SiT-XL/8': SiT_XL_8,  'SiT-XL/16': SiT_XL_16,
+    'SiT-L/2':  SiT_L_2,   'SiT-L/4':  SiT_L_4,   'SiT-L/8':  SiT_L_8,   'SiT-L/16': SiT_L_16,
+    'SiT-B/2':  SiT_B_2,   'SiT-B/4':  SiT_B_4,   'SiT-B/8':  SiT_B_8,   'SiT-B/16': SiT_B_16,
+    'SiT-S/2':  SiT_S_2,   'SiT-S/4':  SiT_S_4,   'SiT-S/8':  SiT_S_8,   'SiT-S/16': SiT_S_16,
 }
 
