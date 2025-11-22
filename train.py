@@ -211,6 +211,7 @@ def main(args):
         vwn_m=args.vwn_m,
         vwn_n=args.vwn_n,
         vwn_dynamic=args.vwn_dynamic,
+        vwn_final_overwidth=args.vwn_final_overwidth,
         **block_kwargs
     )
 
@@ -503,6 +504,7 @@ def parse_args(input_args=None):
     parser.add_argument("--vwn-m", type=int, default=2, help="VWN fraction parameter m (backbone width divisor)")
     parser.add_argument("--vwn-n", type=int, default=3, help="VWN expanded width n (virtual width multiplier)")
     parser.add_argument("--vwn-dynamic", action=argparse.BooleanOptionalAction, default=True, help="Use dynamic VWN routing")
+    parser.add_argument("--vwn-final-overwidth", action="store_true", help="Use VWN over-width D' representation in final layer instead of reduced D")
 
     # dataset
     parser.add_argument("--data-dir", type=str, default="../data/imagenet256")

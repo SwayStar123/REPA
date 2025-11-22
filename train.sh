@@ -6,12 +6,12 @@ accelerate launch train.py \
   --path-type="linear" \
   --prediction="v" \
   --weighting="uniform" \
-  --model="SiT-B/16" \
+  --model="SiT-XL/16" \
   --enc-type="dinov2-vit-b" \
   --proj-coeff=0.5 \
-  --encoder-depth=3 \
+  --encoder-depth=8 \
   --output-dir="exps" \
-  --exp-name="VWN--b16-pixel-8x" \
+  --exp-name="VWN--xl16-pixel-8x" \
   --data-dir="../dataset" \
   --pixel-space \
   --vwn-enabled \

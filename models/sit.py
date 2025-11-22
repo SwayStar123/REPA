@@ -312,6 +312,22 @@ class FinalLayer(nn.Module):
         return x
 
 
+class FinalLayerVWN(nn.Module):
+    def __init__(self, backbone_dim, vwn_dim, patch_size, out_channels):
+        super().__init__()
+        self.norm_final = nn.LayerNorm(vwn_dim, elementwise_affine=False, eps=1e-6)
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(backbone_dim, 2 * vwn_dim, bias=True),
+        )
+        self.linear = nn.Linear(vwn_dim, patch_size * patch_size * out_channels, bias=True)
+
+    def forward(self, x_vwn, c_backbone):
+        shift, scale = self.adaLN_modulation(c_backbone).chunk(2, dim=-1)
+        x = modulate(self.norm_final(x_vwn), shift, scale)
+        return self.linear(x)
+
+
 class SiT(nn.Module):
     """
     Diffusion model with a Transformer backbone.
@@ -338,6 +354,7 @@ class SiT(nn.Module):
         vwn_m: int = 2,
         vwn_n: int = 3,
         vwn_dynamic: bool = True,
+        vwn_final_overwidth: bool = False,
         **block_kwargs  # fused_attn, qk_norm, ...
     ):
         super().__init__()
@@ -356,6 +373,7 @@ class SiT(nn.Module):
         self.vwn_m = vwn_m
         self.vwn_n = vwn_n
         self.vwn_dynamic = vwn_dynamic
+        self.vwn_final_overwidth = vwn_final_overwidth
 
         self.x_embedder = PatchEmbed(
             input_size, patch_size, in_channels, hidden_size, bias=True
@@ -402,7 +420,10 @@ class SiT(nn.Module):
         self.projectors = nn.ModuleList([
             build_mlp(hidden_size, projector_dim, z_dim) for z_dim in z_dims
         ])
-        self.final_layer = FinalLayer(decoder_hidden_size, patch_size, self.out_channels)
+        if self.vwn_enabled and self.vwn_final_overwidth:
+            self.final_layer = FinalLayerVWN(hidden_size, self.vwn_D_prime, patch_size, self.out_channels)
+        else:
+            self.final_layer = FinalLayer(decoder_hidden_size, patch_size, self.out_channels)
 
         self.initialize_weights()
 
@@ -504,14 +525,15 @@ class SiT(nn.Module):
                     zs = [projector(x_hid.reshape(-1, D)).reshape(N, T, -1)
                           for projector in self.projectors]
 
-            # Reduce last over-width hidden states back to width D (Eq. (4))
-            # H_L: (N, T, n, db) -> (N*T, D')
             H_flat = H.view(N * T, self.vwn_D_prime)
             H_norm = self.vwn_reduce_norm(H_flat)
-            h_L = self.vwn_reduce(H_norm)         # (N*T, D)
-            x_for_final = h_L.view(N, T, D)       # (N, T, D)
+            if self.vwn_final_overwidth:
+                x_for_final = H_norm.view(N, T, self.vwn_D_prime)
+            else:
+                h_L = self.vwn_reduce(H_norm)
+                x_for_final = h_L.view(N, T, D)
 
-            x_out_tokens = self.final_layer(x_for_final, c)  # (N, T, patch_size**2 * out_channels)
+            x_out_tokens = self.final_layer(x_for_final, c)
 
         # Unpatchify
         x_out = self.unpatchify(x_out_tokens)  # (N, out_channels, H, W)
